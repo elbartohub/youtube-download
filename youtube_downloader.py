@@ -2,18 +2,27 @@
 """
 YouTube Video Downloader Script
 
-This script allows users to download YouTube videos in the highest quality available.
+This script allows users to download YouTube videos in the highest quality available
+and download transcripts/subtitles as SRT files. By default, it downloads both video
+and transcript with automatic language selection.
 It uses yt-dlp library for downloading and supports various video formats.
 
 Usage:
-    python youtube_downloader.py <YouTube_URL>
+    python youtube_downloader.py <YouTube_URL>  # Downloads both video + transcript (default)
+    python youtube_downloader.py --video-only <YouTube_URL>  # Video only
+    python youtube_downloader.py --transcript-only <YouTube_URL>  # Transcript only
     python youtube_downloader.py -h  # for help
 
 Features:
+- Downloads both video and transcript by default with auto-language selection
 - Downloads in highest quality available
+- Downloads transcripts/subtitles as SRT files (manual subtitles by default)
+- Combined download mode for video + transcript in one command
 - Shows download progress
 - Handles errors gracefully
 - Supports various YouTube URL formats
+- Language selection for transcripts
+- Optional auto-generated captions support
 """
 
 import argparse
@@ -114,19 +123,164 @@ class YouTubeDownloader:
             print(f"❌ Unexpected error: {e}")
             return False
     
-    def _format_duration(self, seconds):
-        """Format duration from seconds to readable format."""
-        if not seconds:
-            return "Unknown"
+    def download_both(self, url, transcript_lang='en', auto_captions=False, auto_lang=False):
+        """Download both video and transcript in one operation."""
+        print("🎬📝 Starting combined download: Video + Transcript")
+        print("=" * 60)
         
-        hours = seconds // 3600
-        minutes = (seconds % 3600) // 60
-        seconds = seconds % 60
+        # Download video first
+        print("\n1️⃣ DOWNLOADING VIDEO")
+        print("-" * 30)
+        video_success = self.download_video(url)
         
-        if hours > 0:
-            return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+        # Download transcript second
+        print("\n2️⃣ DOWNLOADING TRANSCRIPT")
+        print("-" * 30)
+        transcript_success = self.download_transcript(url, transcript_lang, auto_captions, auto_lang)
+        
+        # Summary
+        print("\n📊 DOWNLOAD SUMMARY")
+        print("-" * 30)
+        if video_success and transcript_success:
+            print("✅ Video: Downloaded successfully")
+            print("✅ Transcript: Downloaded successfully")
+            print("🎉 Both downloads completed successfully!")
+            return True
+        elif video_success and not transcript_success:
+            print("✅ Video: Downloaded successfully")
+            print("❌ Transcript: Failed to download")
+            print("⚠️ Video downloaded, but transcript failed")
+            return False
+        elif not video_success and transcript_success:
+            print("❌ Video: Failed to download")
+            print("✅ Transcript: Downloaded successfully")
+            print("⚠️ Transcript downloaded, but video failed")
+            return False
         else:
-            return f"{minutes:02d}:{seconds:02d}"
+            print("❌ Video: Failed to download")
+            print("❌ Transcript: Failed to download")
+            print("💥 Both downloads failed")
+            return False
+
+    def download_transcript(self, url, language='en', auto_captions=False, auto_lang=False):
+        """Download transcript/subtitles as SRT file."""
+        try:
+            # Configure yt-dlp options for transcript download
+            transcript_opts = {
+                'writesubtitles': True,
+                'writeautomaticsub': auto_captions,  # Include auto-generated captions
+                'subtitleslangs': [language],
+                'subtitlesformat': 'srt',
+                'skip_download': True,  # Only download subtitles, not video
+                'outtmpl': str(self.download_path / '%(title)s.%(ext)s'),
+            }
+            
+            # First, get video info to check available subtitles
+            with yt_dlp.YoutubeDL({'quiet': True}) as ydl:
+                print(f"Fetching video information...")
+                info = ydl.extract_info(url, download=False)
+                
+                title = info.get('title', 'Unknown')
+                uploader = info.get('uploader', 'Unknown')
+                
+                # Check available subtitles
+                subtitles = info.get('subtitles', {})
+                automatic_captions = info.get('automatic_captions', {})
+                
+                print(f"\nVideo: {title}")
+                print(f"Uploader: {uploader}")
+                
+                # Show available subtitle languages
+                if subtitles:
+                    print(f"\n📝 Manual subtitles available: {', '.join(subtitles.keys())}")
+                if automatic_captions:
+                    print(f"🤖 Auto-generated captions available: {', '.join(automatic_captions.keys())}")
+                
+                # Check if requested language is available
+                has_manual = language in subtitles
+                has_auto = language in automatic_captions
+                
+                if not has_manual and not has_auto:
+                    print(f"❌ No subtitles found for language '{language}'")
+                    if subtitles or automatic_captions:
+                        available_langs = list(set(list(subtitles.keys()) + list(automatic_captions.keys())))
+                        print(f"💡 Available languages: {', '.join(available_langs)}")
+                        
+                        # Offer to download the first available language
+                        if available_langs:
+                            first_lang = available_langs[0]
+                            if auto_lang:
+                                print(f"🔄 Auto-switching to available language: {first_lang}")
+                                language = first_lang
+                                transcript_opts['subtitleslangs'] = [language]
+                                
+                                # Update availability checks
+                                has_manual = language in subtitles
+                                has_auto = language in automatic_captions
+                            else:
+                                print(f"🤔 Would you like to download '{first_lang}' instead?")
+                                try:
+                                    choice = input("Enter 'y' to download, or any other key to cancel: ").lower().strip()
+                                    if choice in ['y', 'yes']:
+                                        print(f"📥 Switching to language: {first_lang}")
+                                        # Update the language and transcript options
+                                        language = first_lang
+                                        transcript_opts['subtitleslangs'] = [language]
+                                        
+                                        # Update availability checks
+                                        has_manual = language in subtitles
+                                        has_auto = language in automatic_captions
+                                    else:
+                                        return False
+                                except (EOFError, KeyboardInterrupt):
+                                    print("\n❌ Download cancelled")
+                                    return False
+                        else:
+                            return False
+                    else:
+                        return False
+                
+                # Prioritize manual subtitles over auto-captions
+                if has_manual:
+                    print(f"✅ Found manual subtitles for '{language}'")
+                elif has_auto and auto_captions:
+                    print(f"🤖 Found auto-generated captions for '{language}'")
+                elif has_auto and not auto_captions:
+                    print(f"❌ Only auto-generated captions available for '{language}', but auto-captions are disabled")
+                    print(f"💡 Use --include-auto-captions to download auto-generated captions")
+                    return False
+                
+            # Download the transcript
+            print(f"\n🚀 Downloading transcript...")
+            print(f"📁 Saving to: {self.download_path}")
+            print(f"📝 Mode: {'Manual subtitles + auto-captions' if auto_captions else 'Manual subtitles only'}")
+            
+            with yt_dlp.YoutubeDL(transcript_opts) as ydl:
+                ydl.download([url])
+                
+                # Find the downloaded SRT file
+                expected_filename = f"{title}.{language}.srt"
+                srt_path = self.download_path / expected_filename
+                
+                if srt_path.exists():
+                    print(f"✅ Transcript downloaded: {expected_filename}")
+                else:
+                    # Look for any SRT files in the directory that might match
+                    srt_files = list(self.download_path.glob("*.srt"))
+                    if srt_files:
+                        latest_srt = max(srt_files, key=os.path.getctime)
+                        print(f"✅ Transcript downloaded: {latest_srt.name}")
+                    else:
+                        print("⚠️ Transcript download completed but file not found")
+                
+                return True
+                
+        except yt_dlp.DownloadError as e:
+            print(f"❌ Transcript download error: {e}")
+            return False
+        except Exception as e:
+            print(f"❌ Unexpected error: {e}")
+            return False
     
     def get_video_formats(self, url):
         """List available formats for a video."""
@@ -149,6 +303,40 @@ class YouTubeDownloader:
                 
         except Exception as e:
             print(f"Error getting formats: {e}")
+    
+    def list_available_transcripts(self, url):
+        """List all available transcripts/subtitles for a video."""
+        try:
+            with yt_dlp.YoutubeDL({'quiet': True}) as ydl:
+                info = ydl.extract_info(url, download=False)
+                
+                title = info.get('title', 'Unknown')
+                subtitles = info.get('subtitles', {})
+                automatic_captions = info.get('automatic_captions', {})
+                
+                print(f"\nAvailable transcripts for: {title}")
+                print("-" * 60)
+                
+                if subtitles:
+                    print("\n📝 Manual Subtitles:")
+                    for lang, formats in subtitles.items():
+                        format_list = [f.get('ext', 'unknown') for f in formats]
+                        print(f"  {lang}: {', '.join(format_list)}")
+                
+                if automatic_captions:
+                    print("\n🤖 Auto-generated Captions:")
+                    for lang, formats in automatic_captions.items():
+                        format_list = [f.get('ext', 'unknown') for f in formats]
+                        print(f"  {lang}: {', '.join(format_list)}")
+                
+                if not subtitles and not automatic_captions:
+                    print("\n❌ No subtitles or captions available for this video")
+                
+                return True
+                
+        except Exception as e:
+            print(f"Error listing transcripts: {e}")
+            return False
     
     def show_format_debug(self, url):
         """Show detailed format information for debugging."""
@@ -192,6 +380,20 @@ class YouTubeDownloader:
                 
         except Exception as e:
             print(f"Debug error: {e}")
+    
+    def _format_duration(self, seconds):
+        """Format duration from seconds to readable format."""
+        if not seconds:
+            return "Unknown"
+        
+        hours = seconds // 3600
+        minutes = (seconds % 3600) // 60
+        seconds = seconds % 60
+        
+        if hours > 0:
+            return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+        else:
+            return f"{minutes:02d}:{seconds:02d}"
     
     def _select_best_single_format(self, formats):
         """Select the best single format that contains both audio and video."""
@@ -241,14 +443,20 @@ class YouTubeDownloader:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Download YouTube videos in highest quality",
+        description="Download YouTube videos and transcripts (both by default)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s "https://www.youtube.com/watch?v=dQw4w9WgXcQ"  # Download highest quality (merge mode)
+  %(prog)s "https://www.youtube.com/watch?v=dQw4w9WgXcQ"  # Download video + transcript (default)
+  %(prog)s --video-only "https://www.youtube.com/watch?v=dQw4w9WgXcQ"  # Download video only
+  %(prog)s --transcript-only "https://www.youtube.com/watch?v=dQw4w9WgXcQ"  # Download transcript only
+  %(prog)s --transcript-lang es "https://www.youtube.com/watch?v=dQw4w9WgXcQ"  # Spanish transcript + video
+  %(prog)s --no-auto-lang "https://www.youtube.com/watch?v=dQw4w9WgXcQ"  # Disable auto-language (prompt user)
   %(prog)s --list-formats "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
   %(prog)s --output ./my_videos "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
   %(prog)s --single-file "https://www.youtube.com/watch?v=dQw4w9WgXcQ"  # Single file mode
+  %(prog)s --include-auto-captions "https://www.youtube.com/watch?v=dQw4w9WgXcQ"  # Include auto-captions
+  %(prog)s --list-transcripts "https://www.youtube.com/watch?v=dQw4w9WgXcQ"  # List available transcripts
         """
     )
     
@@ -287,6 +495,42 @@ Examples:
         help='Force download even if file exists (will create numbered duplicate)'
     )
     
+    parser.add_argument(
+        '-t', '--transcript-only',
+        action='store_true',
+        help='Download transcript/subtitles only (instead of both video and transcript)'
+    )
+    
+    parser.add_argument(
+        '-v', '--video-only',
+        action='store_true',
+        help='Download video only (instead of both video and transcript)'
+    )
+    
+    parser.add_argument(
+        '--transcript-lang',
+        default='en',
+        help='Language code for transcript (default: en)'
+    )
+    
+    parser.add_argument(
+        '--include-auto-captions',
+        action='store_true',
+        help='Include auto-generated captions (default: manual subtitles only)'
+    )
+    
+    parser.add_argument(
+        '--no-auto-lang',
+        action='store_true',
+        help='Disable automatic language selection (prompt user when language not found) - Default: auto-select available language'
+    )
+    
+    parser.add_argument(
+        '--list-transcripts',
+        action='store_true',
+        help='List all available transcripts/subtitles for the video'
+    )
+    
     args = parser.parse_args()
     
     # Validate URL
@@ -306,13 +550,28 @@ Examples:
     # Initialize downloader (merge is default, single-file is the option)
     downloader = YouTubeDownloader(args.output, merge_streams=not args.single_file, force_download=args.force)
     
-    # List formats, debug, or download
+    # Handle different modes
     if args.list_formats:
         downloader.get_video_formats(args.url)
+    elif args.list_transcripts:
+        downloader.list_available_transcripts(args.url)
     elif args.debug:
         downloader.show_format_debug(args.url)
-    else:
+    elif args.transcript_only:
+        # Download transcript only
+        auto_captions = args.include_auto_captions
+        auto_lang = not args.no_auto_lang  # auto_lang is True by default unless --no-auto-lang is specified
+        success = downloader.download_transcript(args.url, args.transcript_lang, auto_captions, auto_lang)
+        sys.exit(0 if success else 1)
+    elif args.video_only:
+        # Download video only
         success = downloader.download_video(args.url)
+        sys.exit(0 if success else 1)
+    else:
+        # Default: Download both video and transcript (default behavior)
+        auto_captions = args.include_auto_captions
+        auto_lang = not args.no_auto_lang  # auto_lang is True by default unless --no-auto-lang is specified
+        success = downloader.download_both(args.url, args.transcript_lang, auto_captions, auto_lang)
         sys.exit(0 if success else 1)
 
 
