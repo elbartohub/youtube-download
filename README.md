@@ -1,4 +1,4 @@
-# YouTube Video Downloader & Transcript Extractor
+# YouTube Video Downloader & srt Extractor
 
 A comprehensive Python script to download YouTube videos in the highest quality available and extract transcripts/subtitles as SRT files using `yt-dlp`. By default, downloads both video and transcript with automatic language selection.
 
