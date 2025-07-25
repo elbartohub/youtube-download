@@ -10,12 +10,14 @@ It uses yt-dlp library for downloading and supports various video formats.
 Usage:
     python youtube_downloader.py <YouTube_URL>  # Downloads both video + transcript (default)
     python youtube_downloader.py --video-only <YouTube_URL>  # Video only
+    python youtube_downloader.py --audio-only <YouTube_URL>  # Audio only
     python youtube_downloader.py --transcript-only <YouTube_URL>  # Transcript only
     python youtube_downloader.py -h  # for help
 
 Features:
 - Downloads both video and transcript by default with auto-language selection
 - Downloads in highest quality available
+- Downloads audio-only in highest quality (MP3 format)
 - Downloads transcripts/subtitles as SRT files (manual subtitles by default)
 - Combined download mode for video + transcript in one command
 - Shows download progress
@@ -160,6 +162,58 @@ class YouTubeDownloader:
             print("❌ Video: Failed to download")
             print("❌ Transcript: Failed to download")
             print("💥 Both downloads failed")
+            return False
+
+    def download_audio(self, url):
+        """Download audio only from YouTube in highest quality."""
+        try:
+            # Configure yt-dlp options for audio-only download
+            audio_opts = {
+                **self.base_opts,
+                'format': 'bestaudio/best',  # Download best audio quality
+                'postprocessors': [{
+                    'key': 'FFmpegExtractAudio',
+                    'preferredcodec': 'mp3',
+                    'preferredquality': '320',  # Highest MP3 quality
+                }],
+                'prefer_ffmpeg': True,
+            }
+            
+            # First, get video info
+            with yt_dlp.YoutubeDL({'quiet': True}) as ydl:
+                print(f"Fetching audio information...")
+                info = ydl.extract_info(url, download=False)
+                
+                title = info.get('title', 'Unknown')
+                duration = info.get('duration', 0)
+                uploader = info.get('uploader', 'Unknown')
+                
+                print(f"\nAudio Details:")
+                print(f"Title: {title}")
+                print(f"Uploader: {uploader}")
+                print(f"Duration: {self._format_duration(duration)}")
+                print(f"Download mode: Audio only (MP3, 320kbps)")
+                
+                # Download the audio
+                print(f"\n🎵 Starting audio download: {title}")
+                print(f"📁 Saving to: {self.download_path}")
+                if self.base_opts['nooverwrites']:
+                    print(f"📝 Note: If file exists, it will be skipped (use --force to download anyway)")
+                else:
+                    print(f"📝 Note: Force mode - will create numbered duplicate if file exists")
+                
+            # Now download with audio-only configuration
+            with yt_dlp.YoutubeDL(audio_opts) as ydl:
+                ydl.download([url])
+                
+                print(f"\n✅ Successfully downloaded audio: {title}")
+                return True
+                
+        except yt_dlp.DownloadError as e:
+            print(f"❌ Audio download error: {e}")
+            return False
+        except Exception as e:
+            print(f"❌ Unexpected error: {e}")
             return False
 
     def download_transcript(self, url, language='en', auto_captions=False, auto_lang=False):
@@ -449,6 +503,7 @@ def main():
 Examples:
   %(prog)s "https://www.youtube.com/watch?v=dQw4w9WgXcQ"  # Download video + transcript (default)
   %(prog)s --video-only "https://www.youtube.com/watch?v=dQw4w9WgXcQ"  # Download video only
+  %(prog)s --audio-only "https://www.youtube.com/watch?v=dQw4w9WgXcQ"  # Download audio only
   %(prog)s --transcript-only "https://www.youtube.com/watch?v=dQw4w9WgXcQ"  # Download transcript only
   %(prog)s --transcript-lang es "https://www.youtube.com/watch?v=dQw4w9WgXcQ"  # Spanish transcript + video
   %(prog)s --no-auto-lang "https://www.youtube.com/watch?v=dQw4w9WgXcQ"  # Disable auto-language (prompt user)
@@ -505,6 +560,12 @@ Examples:
         '-v', '--video-only',
         action='store_true',
         help='Download video only (instead of both video and transcript)'
+    )
+    
+    parser.add_argument(
+        '-a', '--audio-only',
+        action='store_true',
+        help='Download audio only in MP3 format (highest quality)'
     )
     
     parser.add_argument(
@@ -566,6 +627,10 @@ Examples:
     elif args.video_only:
         # Download video only
         success = downloader.download_video(args.url)
+        sys.exit(0 if success else 1)
+    elif args.audio_only:
+        # Download audio only
+        success = downloader.download_audio(args.url)
         sys.exit(0 if success else 1)
     else:
         # Default: Download both video and transcript (default behavior)
