@@ -91,6 +91,8 @@ youtube-srt/
 - Converts output to Traditional Chinese using OpenCC (if installed)
 - Supports GPU acceleration if available
 
+**Note:** If the translation model is not present, the app will automatically create the `translation_models` directory and download the required model on first use. No manual intervention is needed.
+
 ---
 
 ## System Requirements
