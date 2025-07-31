@@ -1,1 +1,9 @@
+
 yt-dlp>=2023.12.30
+gradio>=4.0.0
+transformers>=4.30.0
+torch>=2.0.0
+sentencepiece>=0.1.99
+protobuf>=3.20.0
+huggingface_hub>=0.21.0
+opencc-python-reimplemented>=0.1.7
