@@ -1,7 +1,18 @@
 
 # YouTube Video Downloader & Translator (Web & CLI)
 
+---
 A comprehensive Python toolkit and web app for downloading YouTube videos, extracting subtitles, and translating English subtitles to Traditional Chinese using local AI models. Includes both a command-line interface and a Gradio-based web interface.
+
+
+## 🆕 Post-Translation Correction (Web & CLI)
+
+**New Feature:** After subtitle translation, you can now review and correct the translated SRT before saving or downloading:
+
+- **Web App:** The translated SRT appears in an editable text area. Make corrections, then click "Download Corrected Translation" to save your changes.
+- **CLI:** After translation, the SRT file opens in your default text editor (set by `$EDITOR`, or falls back to `nano`, `vi`, or Notepad). Edit and save before closing the editor.
+
+This ensures you can fix any translation mistakes before using the subtitles.
 
 ---
 
@@ -57,7 +68,8 @@ A comprehensive Python toolkit and web app for downloading YouTube videos, extra
 2. **Get Video Info**
 3. **Configure Options** (subtitle language, auto-captions, translation, quality)
 4. **Choose Download Type** (Video & Subtitles, Subtitles Only)
-5. **Download Files** from the web interface
+5. **Review and Edit Translated Subtitles** in the editable area (optional)
+6. **Download Files** (including corrected translation) from the web interface
 
 ### Command-Line Interface
 
@@ -65,6 +77,10 @@ A comprehensive Python toolkit and web app for downloading YouTube videos, extra
 ```bash
 python youtube_downloader.py "https://www.youtube.com/watch?v=VIDEO_ID"
 ```
+
+**After translation:**
+- If you download a translated SRT, it will automatically open in your default text editor for review and correction. Save and close the editor to finish.
+
 #### Video-Only, Transcript-Only, Audio-Only, and Advanced Options
 See below for more CLI examples and options.
 
