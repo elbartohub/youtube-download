@@ -318,16 +318,50 @@ class YouTubeDownloader:
                 
                 if srt_path.exists():
                     print(f"✅ Transcript downloaded: {expected_filename}")
+                    # Post-translation correction: open in editor if translated SRT
+                    if language in ["zh", "zh-cn", "zh-tw"] or "zh" in expected_filename:
+                        self._open_in_editor(srt_path)
                 else:
                     # Look for any SRT files in the directory that might match
                     srt_files = list(self.download_path.glob("*.srt"))
                     if srt_files:
                         latest_srt = max(srt_files, key=os.path.getctime)
                         print(f"✅ Transcript downloaded: {latest_srt.name}")
+                        # Post-translation correction: open in editor if translated SRT
+                        if language in ["zh", "zh-cn", "zh-tw"] or "zh" in latest_srt.name:
+                            self._open_in_editor(latest_srt)
                     else:
                         print("⚠️ Transcript download completed but file not found")
-                
                 return True
+        except yt_dlp.DownloadError as e:
+            print(f"❌ Transcript download error: {e}")
+            return False
+        except Exception as e:
+            print(f"❌ Unexpected error: {e}")
+            return False
+    def _open_in_editor(self, file_path):
+        """Open the given file in the user's default editor for manual correction."""
+        import subprocess
+        import platform
+        editor = os.environ.get("EDITOR")
+        if not editor:
+            # Fallbacks: macOS 'open -e', Linux 'nano', Windows 'notepad'
+            if platform.system() == "Darwin":
+                editor = "open -e"
+            elif platform.system() == "Windows":
+                editor = "notepad"
+            else:
+                editor = "nano"
+        print(f"\n✏️  Opening translated SRT for correction: {file_path}\n(After editing, save and close the editor to continue.)")
+        try:
+            if editor == "open -e":
+                subprocess.run(["open", "-e", str(file_path)])
+            elif editor == "notepad":
+                subprocess.run(["notepad", str(file_path)])
+            else:
+                subprocess.run([editor, str(file_path)])
+        except Exception as e:
+            print(f"[Warning] Could not open editor: {e}\nYou can manually edit the file: {file_path}")
                 
         except yt_dlp.DownloadError as e:
             print(f"❌ Transcript download error: {e}")

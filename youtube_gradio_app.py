@@ -1,3 +1,12 @@
+import os
+from pathlib import Path
+# Set up local nltk_data folder for tokenizers
+nltk_data_path = Path(__file__).parent / 'nltk_data'
+nltk_data_path.mkdir(exist_ok=True)
+os.environ['NLTK_DATA'] = str(nltk_data_path)
+import pysrt
+import nltk
+import textwrap
 #!/usr/bin/env python3
 """
 YouTube Video Downloader with Translation - Gradio Web Interface
@@ -71,6 +80,103 @@ except ImportError:
 
 
 class YouTubeTranslationApp:
+    def combine_sentence_and_length(self, input_path, output_path, max_length=60, lang='english'):
+        """Combine SRT blocks by sentence, then split long sentences by max_length."""
+        try:
+            subs = pysrt.open(input_path)
+            dictionary_path = Path(__file__).parent / 'dictionary.txt'
+            preserve_phrases = set()
+            if dictionary_path.exists():
+                with open(dictionary_path, 'r', encoding='utf-8') as dict_file:
+                    for line in dict_file:
+                        line = line.strip()
+                        if not line or '=' not in line:
+                            continue
+                        key, _ = line.split('=', 1)
+                        preserve_phrases.add(key.strip())
+
+            # Scan ahead and merge blocks until a full dictionary phrase is found
+            all_text = ''
+            buffer = ''
+            i = 0
+            while i < len(subs):
+                text = subs[i].text.replace('\n', ' ')
+                if buffer:
+                    buffer += ' ' + text
+                else:
+                    buffer = text
+                found_phrase = None
+                for phrase in preserve_phrases:
+                    if phrase in buffer:
+                        found_phrase = phrase
+                        break
+                if found_phrase:
+                    # Flush buffer as a single block
+                    all_text += buffer + ' '
+                    buffer = ''
+                    i += 1
+                    continue
+                # If not found, look ahead to next block
+                i += 1
+            if buffer:
+                all_text += buffer + ' '
+            # Ensure punkt is available in local nltk_data
+            try:
+                nltk.data.find('tokenizers/punkt')
+            except LookupError:
+                nltk.download('punkt', download_dir=str(nltk_data_path))
+            # Use 'english' for sentence splitting unless user requests Chinese and punkt/chinese is available
+            lang_code = 'english'
+            if lang == 'chinese':
+                # Try to use Chinese sentence splitter if available, else fallback to English
+                try:
+                    nltk.data.find('tokenizers/punkt/chinese.pickle')
+                    lang_code = 'chinese'
+                except LookupError:
+                    print('[combine_sentence_and_length] Warning: Chinese sentence splitter not found, using English splitter.')
+            sentences = nltk.sent_tokenize(all_text, language=lang_code)
+            merged = []
+            idx = 0
+            sub_idx = 0
+            while idx < len(sentences):
+                sentence = sentences[idx]
+                words = re.findall(r'\w+', sentence)
+                count = 0
+                start, end = None, None
+                text_accum = ''
+                while sub_idx < len(subs) and count < len(words):
+                    sub = subs[sub_idx]
+                    sub_words = re.findall(r'\w+', sub.text.replace('\n', ' '))
+                    if start is None:
+                        start = sub.start
+                    end = sub.end
+                    text_accum += (sub.text + ' ')
+                    count += len(sub_words)
+                    sub_idx += 1
+                if start is None or end is None:
+                    print(f"[combine_sentence_and_length] Skipping sentence due to missing timing: {sentence}")
+                    idx += 1
+                    continue
+                wrapped = textwrap.wrap(sentence, width=max_length)
+                if len(wrapped) == 1:
+                    merged.append((start, end, wrapped[0]))
+                else:
+                    total_ms = (end.ordinal - start.ordinal)
+                    chunk_ms = total_ms // len(wrapped) if len(wrapped) > 0 else total_ms
+                    for i, line in enumerate(wrapped):
+                        chunk_start = start.ordinal + i * chunk_ms
+                        chunk_end = chunk_start + chunk_ms
+                        new_start = pysrt.SubRipTime(milliseconds=chunk_start)
+                        new_end = pysrt.SubRipTime(milliseconds=chunk_end)
+                        merged.append((new_start, new_end, line))
+                idx += 1
+            with open(output_path, 'w', encoding='utf-8') as f:
+                for i, (start, end, text) in enumerate(merged, 1):
+                    f.write(f"{i}\n{start} --> {end}\n{text}\n\n")
+            return str(output_path)
+        except Exception as e:
+            print(f"[combine_sentence_and_length] Error: {e}")
+            return None
     def __init__(self):
         self.download_path = Path("./downloads")
         self.download_path.mkdir(exist_ok=True)
@@ -79,50 +185,80 @@ class YouTubeTranslationApp:
         self.setup_translation_model()
         
     def setup_translation_model(self):
-        """Initialize the translation model for English to Traditional Chinese (via Simplified Chinese + OpenCC)."""
+        """Initialize the NLLB-200 translation model for English to Traditional Chinese, using mps on Mac if available."""
         try:
-            print("Loading translation model (English to Chinese, with optional Traditional conversion)...")
-            model_name = "Helsinki-NLP/opus-mt-en-zh"
+            print("Loading NLLB-200 translation model (English to Traditional Chinese)...")
+            model_name = "facebook/nllb-200-3.3B"  # Full version: best quality, slower
             self.translation_tokenizer = AutoTokenizer.from_pretrained(model_name)
             self.translation_model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
-            self.translator = pipeline(
-                "translation", 
-                model=self.translation_model, 
-                tokenizer=self.translation_tokenizer,
-                device=0 if torch.cuda.is_available() else -1
-            )
-            try:
-                import opencc
-                self.opencc = opencc.OpenCC('s2t')
-                print("✅ OpenCC loaded: Simplified to Traditional Chinese conversion enabled.")
-            except ImportError:
-                self.opencc = None
-                print("⚠️ OpenCC not installed: output will be Simplified Chinese. Install with 'pip install opencc-python-reimplemented' for Traditional Chinese.")
-            print("✅ Translation model loaded successfully!")
+            # Device selection: mps (Mac), cuda (GPU), cpu otherwise
+            import platform
+            self.device_str = "cpu"
+            if torch.cuda.is_available():
+                self.device_str = "cuda"
+            elif hasattr(torch, "has_mps") and torch.has_mps and torch.backends.mps.is_available():
+                self.device_str = "mps"
+            print(f"[Translation] Using device: {self.device_str}")
+            if self.device_str == "cuda":
+                self.translator = pipeline(
+                    "translation",
+                    model=self.translation_model,
+                    tokenizer=self.translation_tokenizer,
+                    device=0
+                )
+            else:
+                self.translator = pipeline(
+                    "translation",
+                    model=self.translation_model,
+                    tokenizer=self.translation_tokenizer,
+                    device=-1
+                )
+            if self.device_str == "mps":
+                self.translation_model.to("mps")
+            self.src_lang = "eng_Latn"
+            self.tgt_lang = "zho_Hant"
+            print("✅ NLLB-200 translation model loaded successfully!")
         except Exception as e:
-            print(f"❌ Error loading translation model: {e}")
+            print(f"❌ Error loading NLLB-200 model: {e}")
             self.translator = None
-            self.opencc = None
     
     def translate_text(self, text: str, max_length: int = 512) -> str:
-        """Translate English text to Traditional Chinese (via Simplified Chinese + OpenCC if available)."""
+        """Translate English text to Traditional Chinese using NLLB-200. Uses manual inference for MPS, pipeline for CUDA/CPU."""
         if not self.translator:
             return text
         try:
-            # Split long text into chunks to avoid token limits
             sentences = re.split(r'[.!?]+', text)
             translated_sentences = []
             for sentence in sentences:
-                if sentence.strip():
-                    result = self.translator(
-                        sentence.strip(), 
+                if not sentence.strip():
+                    continue
+                if getattr(self, "device_str", "cpu") == "mps":
+                    # Manual inference for MPS
+                    inputs = self.translation_tokenizer(
+                        sentence.strip(),
+                        return_tensors="pt",
                         max_length=max_length,
-                        do_sample=False
+                        padding=True
+                    )
+                    for k in inputs:
+                        inputs[k] = inputs[k].to("mps")
+                    generated_tokens = self.translation_model.generate(
+                        **inputs,
+                        forced_bos_token_id=self.translation_tokenizer.convert_tokens_to_ids(self.tgt_lang),
+                        max_length=max_length
+                    )
+                    zh_text = self.translation_tokenizer.batch_decode(generated_tokens, skip_special_tokens=True)[0]
+                else:
+                    # Use pipeline for CUDA/CPU
+                    result = self.translator(
+                        sentence.strip(),
+                        max_length=max_length,
+                        do_sample=False,
+                        src_lang=self.src_lang,
+                        tgt_lang=self.tgt_lang
                     )
                     zh_text = result[0]['translation_text']
-                    if hasattr(self, 'opencc') and self.opencc:
-                        zh_text = self.opencc.convert(zh_text)
-                    translated_sentences.append(zh_text)
+                translated_sentences.append(zh_text)
             return '。'.join(translated_sentences)
         except Exception as e:
             print(f"Translation error: {e}")
@@ -152,7 +288,8 @@ class YouTubeTranslationApp:
         url: str, 
         subtitle_lang: str = "en",
         include_auto_captions: bool = True,
-        translate_subtitles: bool = True
+        translate_subtitles: bool = True,
+        max_length: int = 60
     ) -> Tuple[str, str, str]:
         """Download subtitle only with optional translation."""
         try:
@@ -190,7 +327,9 @@ class YouTubeTranslationApp:
                     if translate_subtitles and self.translator:
                         translated_transcript_path = self.translate_srt_file(
                             transcript_path, 
-                            download_folder / f'{clean_title}_zh-tw.srt'
+                            download_folder / f'{clean_title}_zh-tw.srt',
+                            combine_and_split=True,
+                            max_length=max_length
                         )
                         # Ensure translated file exists and is not empty
                         if translated_transcript_path and os.path.exists(translated_transcript_path):
@@ -233,7 +372,8 @@ class YouTubeTranslationApp:
         subtitle_lang: str = "en",
         include_auto_captions: bool = True,
         translate_subtitles: bool = True,
-        video_quality: str = "best"
+        video_quality: str = "best",
+        max_length: int = 60
     ) -> Tuple[str, str, str, str]:
         """Download video and transcript with optional translation."""
         try:
@@ -287,7 +427,9 @@ class YouTubeTranslationApp:
                     if translate_subtitles and self.translator:
                         translated_transcript_path = self.translate_srt_file(
                             transcript_path, 
-                            download_folder / f'{clean_title}_zh-tw.srt'
+                            download_folder / f'{clean_title}_zh-tw.srt',
+                            combine_and_split=True,
+                            max_length=max_length
                         )
             
             # Create download summary
@@ -312,52 +454,92 @@ class YouTubeTranslationApp:
             error_msg = f"❌ Error during download: {str(e)}"
             return error_msg, "", "", ""
     
-    def translate_srt_file(self, srt_path: str, output_path: Path) -> str:
-        """Translate an SRT subtitle file to Traditional Chinese."""
+    def translate_srt_file(self, srt_path: str, output_path: Path, combine_and_split: bool = True, max_length: int = 60) -> str:
+        # Load custom dictionary if present
+        import re
+        dictionary_path = Path(__file__).parent / 'dictionary.txt'
+        custom_dict = {}
+        if dictionary_path.exists():
+            with open(dictionary_path, 'r', encoding='utf-8') as dict_file:
+                for line in dict_file:
+                    line = line.strip()
+                    if not line or '=' not in line:
+                        continue
+                    key, value = line.split('=', 1)
+                    # Remove punctuation and lowercase for matching
+                    key_clean = re.sub(r'[\W_]+', '', key).lower()
+                    custom_dict[key_clean] = value.strip()
+        """Translate an SRT subtitle file to Traditional Chinese, then combine by sentence and split by length."""
         try:
-            print(f"[translate_srt_file] Translating: {srt_path} -> {output_path}")
             with open(srt_path, 'r', encoding='utf-8') as f:
                 content = f.read()
 
             # Parse SRT format
             subtitle_blocks = re.split(r'\n\s*\n', content.strip())
-            translated_blocks = []
+            translated_lines = []
 
             for block in subtitle_blocks:
                 lines = block.strip().split('\n')
                 if len(lines) >= 3:
-                    # Keep index and timestamp, translate text
-                    index = lines[0]
-                    timestamp = lines[1]
                     text_lines = lines[2:]
-
-                    # Translate each text line
-                    translated_lines = []
                     for line in text_lines:
                         if line.strip():
-                            translated_line = self.translate_text(line.strip())
+                            # Apply dictionary to source before translation (preserve original terms)
+                            src = line.strip()
+                            src_clean = re.sub(r'[\W_]+', '', src).lower()
+                            for k, v in custom_dict.items():
+                                if k in src_clean:
+                                    # Insert original term in source
+                                    src = re.sub(r'\b' + re.escape(k) + r'\b', v, src, flags=re.IGNORECASE)
+                            translated_line = self.translate_text(src)
+                            # Apply dictionary to translated line (for post-translation correction)
+                            trans_clean = re.sub(r'[\W_]+', '', translated_line).lower()
+                            for k, v in custom_dict.items():
+                                if k in trans_clean:
+                                    translated_line = re.sub(r'\b' + re.escape(k) + r'\b', v, translated_line, flags=re.IGNORECASE)
                             print(f"[translate_srt_file] EN: {line.strip()} -> ZHT: {translated_line}")
                             translated_lines.append(translated_line)
 
-                    translated_block = f"{index}\n{timestamp}\n" + "\n".join(translated_lines)
-                    translated_blocks.append(translated_block)
+            # Generate temp SRT with one block per sentence and evenly distributed timing
+            temp_translated_path = str(output_path) + ".tmp.srt"
+            total_sentences = len(translated_lines)
+            # Assume video duration is 10 minutes if unknown (600 seconds)
+            default_duration = 600
+            start_sec = 0
+            end_sec = default_duration
+            if total_sentences > 0:
+                block_duration = (end_sec - start_sec) / total_sentences
+            else:
+                block_duration = end_sec - start_sec
+            with open(temp_translated_path, 'w', encoding='utf-8') as f:
+                for i, line in enumerate(translated_lines):
+                    s = start_sec + i * block_duration
+                    e = s + block_duration
+                    # Format times as SRT
+                    def sec2srt(sec):
+                        h = int(sec // 3600)
+                        m = int((sec % 3600) // 60)
+                        s = int(sec % 60)
+                        ms = int((sec - int(sec)) * 1000)
+                        return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+                    f.write(f"{i+1}\n{sec2srt(s)} --> {sec2srt(e)}\n{line}\n\n")
 
-            # Write translated SRT file
-            translated_content = "\n\n".join(translated_blocks)
-            if not translated_content.strip():
-                print("[translate_srt_file] Warning: No translated content generated.")
+            # Combine by sentence and split by length
+            if combine_and_split:
+                final_path = self.combine_sentence_and_length(temp_translated_path, output_path, max_length=max_length, lang='chinese')
+                os.remove(temp_translated_path)
+                return final_path
+            else:
+                if not translated_lines:
+                    with open(output_path, 'w', encoding='utf-8') as f:
+                        f.write("[Translation failed or no content to translate]")
+                    return str(output_path)
                 with open(output_path, 'w', encoding='utf-8') as f:
-                    f.write("[Translation failed or no content to translate]")
+                    f.write('\n'.join(translated_lines))
                 return str(output_path)
-
-            with open(output_path, 'w', encoding='utf-8') as f:
-                f.write(translated_content)
-
-            return str(output_path)
         except Exception as e:
-            print(f"[translate_srt_file] Translation error: {e}")
             with open(output_path, 'w', encoding='utf-8') as f:
-                f.write(f"[Translation error: {e}]")
+                f.write(f"[Translation error: {e}")
             return str(output_path)
     
     def _format_duration(self, seconds):
@@ -436,6 +618,11 @@ class YouTubeTranslationApp:
                         label="Video Quality"
                     )
             
+            max_length_slider = gr.Slider(
+                minimum=20, maximum=120, value=30, step=5,
+                label="Max Characters per Subtitle Block (for Sentence Merge/Split)",
+                interactive=True
+            )
             download_button = gr.Button("⬇️ Download Video & Subtitles", variant="primary", size="lg")
             subtitle_only_button = gr.Button("📝 Download Subtitles Only", variant="secondary", size="lg")
             
@@ -465,10 +652,24 @@ class YouTubeTranslationApp:
                         lines=6,
                         interactive=False
                     )
-                
+
                 with gr.Column():
                     subtitle_only_file = gr.File(label="Downloaded Subtitles", interactive=False)
                     translated_only_file = gr.File(label="Chinese Translation", interactive=False)
+
+            # Editable translation correction area and download button
+            gr.Markdown("---")
+            gr.Markdown("### ✏️ Post-Translation Correction (Edit before Download)")
+            with gr.Row():
+                with gr.Column():
+                    editable_translation = gr.Textbox(
+                        label="Edit Translated Subtitles (SRT)",
+                        lines=20,
+                        interactive=True,
+                        placeholder="The translated SRT will appear here for correction after download."
+                    )
+                    download_corrected_btn = gr.Button("💾 Download Corrected Translation", variant="primary")
+                    corrected_file = gr.File(label="Corrected Chinese Translation", interactive=False)
             
             # Event handlers
             def get_info_handler(url):
@@ -485,33 +686,35 @@ class YouTubeTranslationApp:
                 """
                 return info_text
             
-            def download_handler(url, sub_lang, auto_caps, translate, quality):
+            def download_handler(url, sub_lang, auto_caps, translate, quality, max_length=60):
                 if not url:
                     return "Please enter a YouTube URL", None, None, None
-                
                 result, video, subtitle, translated = self.download_video_and_transcript(
-                    url, sub_lang, auto_caps, translate, quality
+                    url, sub_lang, auto_caps, translate, quality, max_length
                 )
-                
                 return (
                     result,
                     video if video else None,
                     subtitle if subtitle else None,
                     translated if translated else None
                 )
-            
-            def download_subtitle_handler(url, sub_lang, auto_caps, translate):
+
+            def download_subtitle_handler(url, sub_lang, auto_caps, translate, max_length=60):
                 if not url:
-                    return "Please enter a YouTube URL", None, None
-                
+                    return "Please enter a YouTube URL", None, None, ""
                 result, subtitle, translated = self.download_subtitle_only(
-                    url, sub_lang, auto_caps, translate
+                    url, sub_lang, auto_caps, translate, max_length
                 )
-                
+                # Read translated SRT content for editing
+                translated_content = ""
+                if translated and os.path.exists(translated):
+                    with open(translated, 'r', encoding='utf-8') as f:
+                        translated_content = f.read()
                 return (
                     result,
                     subtitle if subtitle else None,
-                    translated if translated else None
+                    translated if translated else None,
+                    translated_content
                 )
             
             info_button.click(
@@ -522,14 +725,29 @@ class YouTubeTranslationApp:
             
             download_button.click(
                 fn=download_handler,
-                inputs=[url_input, subtitle_lang, include_auto_captions, translate_subtitles, video_quality],
+                inputs=[url_input, subtitle_lang, include_auto_captions, translate_subtitles, video_quality, max_length_slider],
                 outputs=[result_output, video_file, subtitle_file, translated_file]
             )
             
             subtitle_only_button.click(
                 fn=download_subtitle_handler,
-                inputs=[url_input, subtitle_lang, include_auto_captions, translate_subtitles],
-                outputs=[subtitle_result_output, subtitle_only_file, translated_only_file]
+                inputs=[url_input, subtitle_lang, include_auto_captions, translate_subtitles, max_length_slider],
+                outputs=[subtitle_result_output, subtitle_only_file, translated_only_file, editable_translation]
+            )
+
+            # Download corrected translation handler
+            def save_corrected_translation(srt_text):
+                # Save the edited SRT to a temp file for download
+                from tempfile import NamedTemporaryFile
+                with NamedTemporaryFile(delete=False, suffix="_corrected.srt", mode="w", encoding="utf-8") as tmp:
+                    tmp.write(srt_text)
+                    tmp_path = tmp.name
+                return tmp_path
+
+            download_corrected_btn.click(
+                fn=save_corrected_translation,
+                inputs=[editable_translation],
+                outputs=[corrected_file]
             )
             
             # Removed gr.Examples blocks to avoid duplicated/confusing results sections

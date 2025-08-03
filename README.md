@@ -1,13 +1,75 @@
 
 # YouTube Video Downloader & Translator (Web & CLI)
 
----
-A comprehensive Python toolkit and web app for downloading YouTube videos, extracting subtitles, and translating English subtitles to Traditional Chinese using local AI models. Includes both a command-line interface and a Gradio-based web interface.
+A comprehensive Python toolkit and web app for downloading YouTube videos, extracting subtitles, and translating English subtitles to Traditional Chinese using local AI models. Includes both a commad-line interface and a Gradio-based web interface.
 
+## YouTube Video Downloader with English→Traditional Chinese Subtitle Translation
+
+This app provides a Gradio web interface and CLI for downloading YouTube videos and subtitles, with automatic translation from English to Traditional Chinese using the NLLB-200 3.3B model (local inference).
+
+## Features
+- Download YouTube videos and subtitles
+- English to Traditional Chinese translation (NLLB-200 3.3B)
+- Subtitle-only mode
+- Advanced SRT manipulation (merge by sentence, split by length, combine both)
+- Custom dictionary for translation corrections (`dictionary.txt`)
+- Device selection: CUDA, MPS (Mac), or CPU
+- Post-translation correction (edit before download)
+- Local model caching for offline use
+
+## Requirements
+- Python 3.8+
+- yt-dlp
+- gradio
+- transformers
+- torch
+- huggingface_hub
+- opencc-python-reimplemented
+- pysrt
+- nltk
+- textwrap
+
+## Setup
+1. Clone this repo and enter the folder:
+   ```bash
+   git clone <repo-url>
+   cd youtube-srt
+   ```
+2. Install dependencies:
+   ```bash
+   bash setup.sh
+   ```
+3. Run the Gradio app:
+   ```bash
+   python youtube_gradio_app.py
+   ```
+4. (Optional) Edit `dictionary.txt` to customize translation corrections.
+
+## Notes
+- The NLLB-200 3.3B model will be downloaded and cached locally on first run (requires ~12GB disk and RAM).
+- For best performance, use a machine with a GPU or Apple Silicon (MPS).
+- All SRT manipulation and translation logic is integrated into the main app.
+
+## License
+MIT
 
 ## 🆕 Post-Translation Correction (Web & CLI)
 
 **New Feature:** After subtitle translation, you can now review and correct the translated SRT before saving or downloading:
+
+## 🈳 Custom Dictionary-Based Translation Correction (Web & CLI)
+
+You can further customize translation output using a `dictionary.txt` file for automatic post-translation corrections.
+
+- Create a file named `dictionary.txt` in the project folder.
+- Each line should be in the format: `original_text=replacement_text`
+- After translation, the app will automatically replace any matching `original_text` in the subtitles with your `replacement_text`.
+
+**Supported in both Web App and CLI:**
+- Web: Corrections are applied before the editable SRT appears.
+- CLI: Corrections are applied before the SRT opens in your editor.
+
+This allows you to enforce custom terminology, fix common translation errors, or personalize the output for your needs.
 
 - **Web App:** The translated SRT appears in an editable text area. Make corrections, then click "Download Corrected Translation" to save your changes.
 - **CLI:** After translation, the SRT file opens in your default text editor (set by `$EDITOR`, or falls back to `nano`, `vi`, or Notepad). Edit and save before closing the editor.

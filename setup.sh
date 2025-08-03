@@ -45,6 +45,11 @@ if [ $? -ne 0 ]; then
 fi
 
 echo ""
+
+# Download NLTK punkt tokenizer
+echo "📚 Downloading NLTK punkt tokenizer..."
+python -c "import nltk; nltk.download('punkt', download_dir='nltk_data')"
+
 echo "✅ Setup completed successfully!"
 echo "=================================================="
 echo ""
@@ -57,7 +62,8 @@ echo "📱 Access it at: http://localhost:7860"
 echo ""
 echo "📝 Features:"
 echo "  • Download YouTube videos and subtitles"
-echo "  • Automatic English to Traditional Chinese translation"
+echo "  • Automatic English to Traditional Chinese translation (NLLB-200 3.3B)"
 echo "  • Web-based user interface"
 echo "  • Support for multiple subtitle languages"
+echo "  • Advanced SRT manipulation and post-translation correction"
 echo ""

@@ -50,3 +50,6 @@ coverage.xml
 
 # macOS
 .DS_Store
+
+nltk_data/
+translation_models/
